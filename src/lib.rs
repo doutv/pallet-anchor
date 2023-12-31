@@ -13,11 +13,11 @@
 // limitations under the License.
 
 //! # Anchor Pallet
-//! Anchor is an On-chain Linked List system base on substrate. 
+//! Anchor is an On-chain Linked List system base on substrate.
 //! On another hand, Anchor can alse be treated as Name Service or On-chain Key-value Storage.
 //!
 //! ## Overview
-//! There are two main parts storage and market of Anchor pallet. 
+//! There are two main parts storage and market of Anchor pallet.
 //! 1.Storage part: set_anchor.
 //! 2.Market part: sell_anchor,unsell_anchor,buy_anchor.
 //!
@@ -26,28 +26,26 @@
 //! - Raw : 4M bytes max string storage, UTF8 support.
 //! - Protocol: 256 bytes max string, customize protocol.
 //! - Pre: block number linked to previous anchor storage.
-//! 
+//!
 //! ## Interface
 //! * set_anchor, one method to update and init storage.
 //! * sell_anchor, sell anchor freely or to target account
 //! * unsell_anchor, revoke selling status
 //! * buy_anchor, buy a selling anchor
-//! 
+//!
 
 // Ensure we're `no_std` when compiling for Wasm.
 #![cfg_attr(not(feature = "std"), no_std)]
 
 use frame_support::{
-	dispatch::{DispatchResult},
-	traits::{Currency,ExistenceRequirement},
-	weights::Weight,
+    dispatch::DispatchResult,
+    traits::{BuildGenesisConfig, Currency, ExistenceRequirement},
+    weights::Weight,
 };
 use frame_system::ensure_signed;
-use sp_runtime::{
-	traits::{SaturatedConversion,StaticLookup},
-};
-use sp_std::{convert::TryInto, prelude::*};
 pub use pallet::*;
+use sp_runtime::traits::{SaturatedConversion, StaticLookup};
+use sp_std::{convert::TryInto, prelude::*};
 
 mod benchmarking;
 #[cfg(test)]
@@ -60,295 +58,294 @@ pub use weights::*;
 
 #[frame_support::pallet]
 pub mod pallet {
-	use super::*;
-	use frame_support::pallet_prelude::*;
-	use frame_system::pallet_prelude::*;
+    use super::*;
+    use frame_support::pallet_prelude::*;
+    use frame_system::pallet_prelude::*;
 
-	#[pallet::config]
-	pub trait Config: pallet_balances::Config + frame_system::Config {
-		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
-		type WeightInfo: WeightInfo;
-		type Currency: Currency<Self::AccountId>;
-	}
+    #[pallet::config]
+    pub trait Config: pallet_balances::Config + frame_system::Config {
+        type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
+        type WeightInfo: WeightInfo;
+        type Currency: Currency<Self::AccountId>;
+    }
 
-	#[pallet::pallet]
-	#[pallet::without_storage_info]
-	//#[pallet::generate_store(pub(super) trait Store)]
-	pub struct Pallet<T>(_);
-	
-	#[pallet::hooks]
-	impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
-		fn on_initialize(_n: T::BlockNumber) -> Weight {
-			Weight::zero()
-		}
-		fn on_finalize(_n: T::BlockNumber) {}
-		fn offchain_worker(_n: T::BlockNumber) {}
-	}
+    #[pallet::pallet]
+    #[pallet::without_storage_info]
+    //#[pallet::generate_store(pub(super) trait Store)]
+    pub struct Pallet<T>(_);
 
-	#[pallet::error]
-	pub enum Error<T> {
-		/// Anchor key length over load.
-		LengthMaxLimited,
+    #[pallet::hooks]
+    impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
+        fn on_initialize(_n: BlockNumberFor<T>) -> Weight {
+            Weight::zero()
+        }
+        fn on_finalize(_n: BlockNumberFor<T>) {}
+        fn offchain_worker(_n: BlockNumberFor<T>) {}
+    }
 
-		///Anchor name max length.
-		KeyMaxLimited,
+    #[pallet::error]
+    pub enum Error<T> {
+        /// Anchor key length over load.
+        LengthMaxLimited,
 
-		///Anchor raw data max limit.
-		Base64MaxLimited,
+        ///Anchor name max length.
+        KeyMaxLimited,
 
-		///Anchor protocola max length
-		ProtocolMaxLimited,
+        ///Anchor raw data max limit.
+        Base64MaxLimited,
 
-		///Pre number errror
-		PreAnchorFailed,
+        ///Anchor protocola max length
+        ProtocolMaxLimited,
 
-		///Anchor sell value error.
-		PriceValueLimited,
+        ///Pre number errror
+        PreAnchorFailed,
 
-		///Anchor exists already, can not be created.
-		AnchorExistsAlready,
+        ///Anchor sell value error.
+        PriceValueLimited,
 
-		///Anchor do not exist, can not change status.
-		AnchorNotExists,
+        ///Anchor exists already, can not be created.
+        AnchorExistsAlready,
 
-		///unknown anchor owner data in storage.
-		UnexceptDataError,
+        ///Anchor do not exist, can not change status.
+        AnchorNotExists,
 
-		///Anchor do not belong to the account
-		AnchorNotBelogToAccount,
+        ///unknown anchor owner data in storage.
+        UnexceptDataError,
 
-		///Anchor is not in the sell list.
-		AnchorNotInSellList,
+        ///Anchor do not belong to the account
+        AnchorNotBelogToAccount,
 
-		///Not enough balance
-		InsufficientBalance,
+        ///Anchor is not in the sell list.
+        AnchorNotInSellList,
 
-		///Transfer error.
-		TransferFailed,
+        ///Not enough balance
+        InsufficientBalance,
 
-		///User can not buy the anchor owned by himself
-		CanNotBuyYourOwnAnchor,
+        ///Transfer error.
+        TransferFailed,
 
-		///Anchor was set to sell to target buyer
-		OnlySellToTargetBuyer,
-	}
+        ///User can not buy the anchor owned by himself
+        CanNotBuyYourOwnAnchor,
 
+        ///Anchor was set to sell to target buyer
+        OnlySellToTargetBuyer,
+    }
 
-	#[pallet::event]
-	#[pallet::generate_deposit(pub(super) fn deposit_event)]
-	pub enum Event<T: Config> {
-		/// An anchor is set to selling status.
-		AnchorToSell(T::AccountId,u32,T::AccountId),	//(owner, price , target)
-	}
+    #[pallet::event]
+    #[pallet::generate_deposit(pub(super) fn deposit_event)]
+    pub enum Event<T: Config> {
+        /// An anchor is set to selling status.
+        AnchorToSell(T::AccountId, u32, T::AccountId), //(owner, price , target)
+    }
 
-	/// Hashmap to record anchor status, Anchor => ( Owner, last block )
-	#[pallet::storage]
-	#[pallet::getter(fn owner)]
-	pub(super) type AnchorOwner<T: Config> = StorageMap<_, Twox64Concat, Vec<u8>, (T::AccountId,T::BlockNumber)>;
+    /// Hashmap to record anchor status, Anchor => ( Owner, last block )
+    #[pallet::storage]
+    #[pallet::getter(fn owner)]
+    pub(super) type AnchorOwner<T: Config> =
+        StorageMap<_, Twox64Concat, Vec<u8>, (T::AccountId, BlockNumberFor<T>)>;
 
-	/// Selling anchor status, Anchor => ( Owner, Price, Target customer )
-	#[pallet::storage]
-	#[pallet::getter(fn selling)]
-	pub(super) type SellList<T: Config> = StorageMap<_, Twox64Concat, Vec<u8>, (T::AccountId, u32,T::AccountId)>;
+    /// Selling anchor status, Anchor => ( Owner, Price, Target customer )
+    #[pallet::storage]
+    #[pallet::getter(fn selling)]
+    pub(super) type SellList<T: Config> =
+        StorageMap<_, Twox64Concat, Vec<u8>, (T::AccountId, u32, T::AccountId)>;
 
-	//The genesis config type.
-	#[pallet::genesis_config]
-	pub struct GenesisConfig<T: Config> {
-		pub fee: T::Balance,
-	}
+    //The genesis config type.
+    #[pallet::genesis_config]
+    pub struct GenesisConfig<T: Config> {
+        pub fee: T::Balance,
+    }
 
-	//The default value for the genesis config type.
-	#[cfg(feature = "std")]
-	impl<T: Config> Default for GenesisConfig<T> {
-		fn default() -> Self {
-			Self { fee: Default::default() }
-		}
-	}
+    //The default value for the genesis config type.
+    #[cfg(feature = "std")]
+    impl<T: Config> Default for GenesisConfig<T> {
+        fn default() -> Self {
+            Self {
+                fee: Default::default(),
+            }
+        }
+    }
 
-	// The build of genesis for the pallet.
-	#[pallet::genesis_build]
-	impl<T: Config> GenesisBuild<T> for GenesisConfig<T> {
-		fn build(&self) {}
-	}
+    // The build of genesis for the pallet.
+    #[pallet::genesis_build]
+    impl<T: Config> BuildGenesisConfig for GenesisConfig<T> {
+        fn build(&self) {}
+    }
 
-	#[pallet::call]
-	impl<T: Config> Pallet<T> {
-		/// set a new anchor or update an exist anchor
-		#[pallet::call_index(0)]
-		#[pallet::weight(
+    #[pallet::call]
+    impl<T: Config> Pallet<T> {
+        /// set a new anchor or update an exist anchor
+        #[pallet::call_index(0)]
+        #[pallet::weight(
 			<T as pallet::Config>::WeightInfo::set_anchor((raw.len()).saturated_into())
 		)]
-		pub fn set_anchor(
-			origin: OriginFor<T>,
-			key: Vec<u8>,
-			raw: Vec<u8>,
-			protocol: Vec<u8>,
-			pre:T::BlockNumber
-		) -> DispatchResult {
-			let sender = ensure_signed(origin)?;
-			//0.check is on sell
+        pub fn set_anchor(
+            origin: OriginFor<T>,
+            key: Vec<u8>,
+            raw: Vec<u8>,
+            protocol: Vec<u8>,
+            pre: BlockNumberFor<T>,
+        ) -> DispatchResult {
+            let sender = ensure_signed(origin)?;
+            //0.check is on sell
 
-			//1.param check
-			ensure!(key.len() < 40, Error::<T>::KeyMaxLimited);				//1.1.check key length, <40
-			ensure!(raw.len() < 4*1024*1024, Error::<T>::Base64MaxLimited);	//1.2.check raw(base64) length，<4M
-			ensure!(protocol.len() < 256, Error::<T>::ProtocolMaxLimited);	//1.3.check protocal length, <256
+            //1.param check
+            ensure!(key.len() < 40, Error::<T>::KeyMaxLimited); //1.1.check key length, <40
+            ensure!(raw.len() < 4 * 1024 * 1024, Error::<T>::Base64MaxLimited); //1.2.check raw(base64) length，<4M
+            ensure!(protocol.len() < 256, Error::<T>::ProtocolMaxLimited); //1.3.check protocal length, <256
 
-			//1.1.convert key to lowcase
-			let mut nkey:Vec<u8>;
-			nkey=key.clone().as_mut_slice().to_vec();
-			nkey.make_ascii_lowercase();
+            //1.1.convert key to lowcase
+            let mut nkey: Vec<u8>;
+            nkey = key.clone().as_mut_slice().to_vec();
+            nkey.make_ascii_lowercase();
 
-			let data = <AnchorOwner<T>>::get(&nkey); 		//check anchor status
-			let current_block_number = <frame_system::Pallet<T>>::block_number();
+            let data = <AnchorOwner<T>>::get(&nkey); //check anchor status
+            let current_block_number = <frame_system::Pallet<T>>::block_number();
 
-			//2.check anchor to determine add or update
-			if data.is_none() {
-				let val:u64=0;
-				let zero :T::BlockNumber = val.saturated_into();
-				ensure!(pre == zero, Error::<T>::PreAnchorFailed);
+            //2.check anchor to determine add or update
+            if data.is_none() {
+                let val: u64 = 0;
+                let zero: BlockNumberFor<T> = val.saturated_into();
+                ensure!(pre == zero, Error::<T>::PreAnchorFailed);
 
-				//2.1.create new anchor
-				<AnchorOwner<T>>::insert(nkey, (&sender,current_block_number));
-				
-			}else{
-				//2.2.update exists anchor
-				let owner=data.ok_or(Error::<T>::AnchorNotExists)?;
-				ensure!(sender == owner.0, Error::<T>::AnchorNotBelogToAccount);
-				ensure!(pre == owner.1, Error::<T>::PreAnchorFailed);
+                //2.1.create new anchor
+                <AnchorOwner<T>>::insert(nkey, (&sender, current_block_number));
+            } else {
+                //2.2.update exists anchor
+                let owner = data.ok_or(Error::<T>::AnchorNotExists)?;
+                ensure!(sender == owner.0, Error::<T>::AnchorNotBelogToAccount);
+                ensure!(pre == owner.1, Error::<T>::PreAnchorFailed);
 
-				<AnchorOwner<T>>::try_mutate(&nkey, |status| -> DispatchResult {
-					let d = status.as_mut().ok_or(Error::<T>::UnexceptDataError)?;
-					d.1 = current_block_number;
-					Ok(())
-				})?;
-			}
+                <AnchorOwner<T>>::try_mutate(&nkey, |status| -> DispatchResult {
+                    let d = status.as_mut().ok_or(Error::<T>::UnexceptDataError)?;
+                    d.1 = current_block_number;
+                    Ok(())
+                })?;
+            }
 
-			Ok(())
-		}
+            Ok(())
+        }
 
-		/// Set anchor to sell status and added to sell list
-		#[pallet::call_index(1)]
-		#[pallet::weight(
+        /// Set anchor to sell status and added to sell list
+        #[pallet::call_index(1)]
+        #[pallet::weight(
 			<T as pallet::Config>::WeightInfo::set_sell()
 		)]
-		pub fn sell_anchor(
-			origin: OriginFor<T>, 
-			key: Vec<u8>, 
-			price: u32, 
-			target:<T::Lookup as StaticLookup>::Source		//select from exist accounts.
-		) -> DispatchResult {
-			let sender = ensure_signed(origin)?;
-			let target = T::Lookup::lookup(target)?;
+        pub fn sell_anchor(
+            origin: OriginFor<T>,
+            key: Vec<u8>,
+            price: u32,
+            target: <T::Lookup as StaticLookup>::Source, //select from exist accounts.
+        ) -> DispatchResult {
+            let sender = ensure_signed(origin)?;
+            let target = T::Lookup::lookup(target)?;
 
-			//1.param check		
-			ensure!(key.len() < 40, Error::<T>::KeyMaxLimited); 	//1.1.check key length, <40
-			ensure!(price > 0, Error::<T>::PriceValueLimited); 
+            //1.param check
+            ensure!(key.len() < 40, Error::<T>::KeyMaxLimited); //1.1.check key length, <40
+            ensure!(price > 0, Error::<T>::PriceValueLimited);
 
-			//1.1.lowercase fix
-			let mut nkey:Vec<u8>;
-			nkey=key.clone().as_mut_slice().to_vec();
-			nkey.make_ascii_lowercase();
+            //1.1.lowercase fix
+            let mut nkey: Vec<u8>;
+            nkey = key.clone().as_mut_slice().to_vec();
+            nkey.make_ascii_lowercase();
 
-			//2.check owner
-			let owner=<AnchorOwner<T>>::get(&nkey).ok_or(Error::<T>::AnchorNotExists)?;
-			ensure!(sender==owner.0, <Error<T>>::AnchorNotBelogToAccount);
+            //2.check owner
+            let owner = <AnchorOwner<T>>::get(&nkey).ok_or(Error::<T>::AnchorNotExists)?;
+            ensure!(sender == owner.0, <Error<T>>::AnchorNotBelogToAccount);
 
-			//4.put in sell list
-			<SellList<T>>::insert(nkey, (&sender, price, &target)); 			
-			Self::deposit_event(Event::AnchorToSell(sender,price,target));
-			Ok(())
-		}
+            //4.put in sell list
+            <SellList<T>>::insert(nkey, (&sender, price, &target));
+            Self::deposit_event(Event::AnchorToSell(sender, price, target));
+            Ok(())
+        }
 
-		/// buy an anchor on-sell.
-		#[pallet::call_index(2)]
-		#[pallet::weight(
+        /// buy an anchor on-sell.
+        #[pallet::call_index(2)]
+        #[pallet::weight(
 			<T as pallet::Config >::WeightInfo::buy_anchor()
 		)]
-		pub fn buy_anchor(
-			origin: OriginFor<T>, 
-			key: Vec<u8>
-		) -> DispatchResult {
-			let sender = ensure_signed(origin)?;
-			ensure!(key.len() < 40, Error::<T>::KeyMaxLimited);
+        pub fn buy_anchor(origin: OriginFor<T>, key: Vec<u8>) -> DispatchResult {
+            let sender = ensure_signed(origin)?;
+            ensure!(key.len() < 40, Error::<T>::KeyMaxLimited);
 
-			//lowercase check
-			let mut nkey:Vec<u8>;
-			nkey=key.clone().as_mut_slice().to_vec();
-			nkey.make_ascii_lowercase();
-			
-			let anchor=<SellList<T>>::get(&key).ok_or(Error::<T>::AnchorNotInSellList)?;
+            //lowercase check
+            let mut nkey: Vec<u8>;
+            nkey = key.clone().as_mut_slice().to_vec();
+            nkey.make_ascii_lowercase();
 
-			//0.check anchor sell status
-			//0.1.confirm the anchor is not owned by sender
-			ensure!(sender != anchor.0, <Error<T>>::CanNotBuyYourOwnAnchor);
+            let anchor = <SellList<T>>::get(&key).ok_or(Error::<T>::AnchorNotInSellList)?;
 
-			//0.2.check the anchor sell target
-			if anchor.0 != anchor.2 {
-				ensure!(sender == anchor.2, <Error<T>>::OnlySellToTargetBuyer);
-			}
+            //0.check anchor sell status
+            //0.1.confirm the anchor is not owned by sender
+            ensure!(sender != anchor.0, <Error<T>>::CanNotBuyYourOwnAnchor);
 
-			//0.3.check anchor owner
-			let _owner=<AnchorOwner<T>>::get(&nkey).ok_or(Error::<T>::AnchorNotExists)?;
+            //0.2.check the anchor sell target
+            if anchor.0 != anchor.2 {
+                ensure!(sender == anchor.2, <Error<T>>::OnlySellToTargetBuyer);
+            }
 
-			//1.transfer specail amout to seller
-			let amount= anchor.1;
-			let basic:u128=1000000000000;
-			let tx=basic.saturating_mul(amount.into());
+            //0.3.check anchor owner
+            let _owner = <AnchorOwner<T>>::get(&nkey).ok_or(Error::<T>::AnchorNotExists)?;
 
-			//1.1.check balance
-			ensure!(T::Currency::free_balance(&sender) >= tx.saturated_into(), Error::<T>::InsufficientBalance);
+            //1.transfer specail amout to seller
+            let amount = anchor.1;
+            let basic: u128 = 1000000000000;
+            let tx = basic.saturating_mul(amount.into());
 
-			//1.2.do transfer
-			let res=T::Currency::transfer(
-				&sender,		//transfer from
-				&anchor.0,		//transfer to
-				tx.saturated_into(),		//transfer amount
-				ExistenceRequirement::AllowDeath
-			);
-			ensure!(res.is_ok(), Error::<T>::TransferFailed);
+            //1.1.check balance
+            ensure!(
+                T::Currency::free_balance(&sender) >= tx.saturated_into(),
+                Error::<T>::InsufficientBalance
+            );
 
-			//2.change the owner of anchor 
-			<AnchorOwner<T>>::try_mutate(&nkey, |status| -> DispatchResult {
-				let d = status.as_mut().ok_or(Error::<T>::UnexceptDataError)?;
-				d.0 = sender;
+            //1.2.do transfer
+            let res = T::Currency::transfer(
+                &sender,             //transfer from
+                &anchor.0,           //transfer to
+                tx.saturated_into(), //transfer amount
+                ExistenceRequirement::AllowDeath,
+            );
+            ensure!(res.is_ok(), Error::<T>::TransferFailed);
 
-				//3.remove the anchor from sell list
-				<SellList<T>>::remove(&nkey);
-				Ok(())
-			})?;
-			Ok(())
-		}
+            //2.change the owner of anchor
+            <AnchorOwner<T>>::try_mutate(&nkey, |status| -> DispatchResult {
+                let d = status.as_mut().ok_or(Error::<T>::UnexceptDataError)?;
+                d.0 = sender;
 
-		/// Revoke anchor from selling status
-		#[pallet::call_index(3)]
-		#[pallet::weight(
+                //3.remove the anchor from sell list
+                <SellList<T>>::remove(&nkey);
+                Ok(())
+            })?;
+            Ok(())
+        }
+
+        /// Revoke anchor from selling status
+        #[pallet::call_index(3)]
+        #[pallet::weight(
 			<T as pallet::Config>::WeightInfo::set_unsell()
 		)]
-		pub fn unsell_anchor(
-			origin: OriginFor<T>, 
-			key: Vec<u8>, 
-		) -> DispatchResult {
-			let sender = ensure_signed(origin)?;
-			
-			//1.param check
-			//1.1.check key length, <40
-			ensure!(key.len() < 40, Error::<T>::KeyMaxLimited);
+        pub fn unsell_anchor(origin: OriginFor<T>, key: Vec<u8>) -> DispatchResult {
+            let sender = ensure_signed(origin)?;
 
-			//1.2.lowercase check
-			let mut nkey:Vec<u8>;
-			nkey=key.clone().as_mut_slice().to_vec();
-			nkey.make_ascii_lowercase();
+            //1.param check
+            //1.1.check key length, <40
+            ensure!(key.len() < 40, Error::<T>::KeyMaxLimited);
 
-			//1.3.check sell list
-			<SellList<T>>::get(&key).ok_or(Error::<T>::AnchorNotInSellList)?;
+            //1.2.lowercase check
+            let mut nkey: Vec<u8>;
+            nkey = key.clone().as_mut_slice().to_vec();
+            nkey.make_ascii_lowercase();
 
-			//2.check owner
-			let owner=<AnchorOwner<T>>::get(&nkey).ok_or(Error::<T>::AnchorNotExists)?;
-			ensure!(sender==owner.0, <Error<T>>::AnchorNotBelogToAccount);
+            //1.3.check sell list
+            <SellList<T>>::get(&key).ok_or(Error::<T>::AnchorNotInSellList)?;
 
-			//3.remove from sell list		
-			<SellList<T>>::remove(nkey);
-			Ok(())
-		}
-	}
+            //2.check owner
+            let owner = <AnchorOwner<T>>::get(&nkey).ok_or(Error::<T>::AnchorNotExists)?;
+            ensure!(sender == owner.0, <Error<T>>::AnchorNotBelogToAccount);
+
+            //3.remove from sell list
+            <SellList<T>>::remove(nkey);
+            Ok(())
+        }
+    }
 }
