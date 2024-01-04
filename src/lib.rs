@@ -150,6 +150,7 @@ pub mod pallet {
     pub(super) type SellList<T: Config> =
         StorageMap<_, Twox64Concat, Vec<u8>, (T::AccountId, u32, T::AccountId)>;
 
+    /*
     //The genesis config type.
     #[pallet::genesis_config]
     pub struct GenesisConfig<T: Config> {
@@ -171,6 +172,7 @@ pub mod pallet {
     impl<T: Config> BuildGenesisConfig for GenesisConfig<T> {
         fn build(&self) {}
     }
+    */
 
     #[pallet::call]
     impl<T: Config> Pallet<T> {
